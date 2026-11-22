@@ -44,8 +44,20 @@ enum DocumentPicker {
         present(types: types, asCopy: true, multiple: true, onPick: onPick, onCancel: onCancel)
     }
 
-    /// Optional. Often a no-op on resigned installs (Open does nothing).
-    /// The system Cancel button still works; prefer the Documents fallback.
+    /// Opens the Files app on this app's Documents folder, the same
+    /// `shareddocuments://` trick Baixador uses.
+    static func openAppDocumentsInFiles() {
+        guard let path = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first?.path else { return }
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        if let url = URL(string: "shareddocuments://" + encoded) {
+            UIApplication.shared.open(url)
+        }
+    }
+
+    /// Optional attempt to pick an external folder in place.
     static func pickFolderInPlace(
         onPick: @escaping @MainActor (URL) -> Void,
         onCancel: @escaping @MainActor () -> Void = {}

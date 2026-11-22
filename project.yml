@@ -20,12 +20,11 @@ targets:
   HarnessMobile:
     type: application
     platform: iOS
+    # Sideload/Feather: ship an empty entitlements file, matching Baixador.
+    # HealthKit and App Groups are not in the fixed signing profile and can
+    # interfere with Files / the document picker after resign.
     entitlements:
       path: HarnessMobile/HarnessMobile.entitlements
-      properties:
-        com.apple.developer.healthkit: true
-        com.apple.security.application-groups:
-          - group.com.llf.harnessmobile.share
     sources:
       - path: HarnessMobile
         excludes:
@@ -77,8 +76,20 @@ targets:
       properties:
         CFBundleDisplayName: Harness Mobile
         ITSAppUsesNonExemptEncryption: false
+        LSRequiresIPhoneOS: true
         LSSupportsOpeningDocumentsInPlace: true
         UIFileSharingEnabled: true
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Files
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.item
+              - public.data
+              - public.content
+              - public.text
+              - public.folder
+              - public.directory
         NSSupportsLiveActivities: true
         NSCameraUsageDescription: Only used when you deliberately take a photo and hand it to the local OCR tool.
         NSPhotoLibraryUsageDescription: Only reads the items you deliberately pick for local OCR analysis.
