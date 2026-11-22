@@ -5,7 +5,7 @@ import Foundation
 /// session grouping order used by the Desktop workspace controller.
 struct LocalWorkspaceView: Codable, Sendable, Equatable, Identifiable {
     let id: UUID
-    let path: String
+    var path: String
     var title: String
     var sessionIDs: [UUID]
     let createdAt: Date
@@ -64,6 +64,17 @@ actor LocalWorkspaceRegistry {
         let normalized = try normalizedDirectory(path)
         if let existing = workspaces.first(where: { $0.path == normalized.path }) {
             return existing
+        }
+        // The default workspace moved (Application Support → Documents):
+        // keep its identity and sessions, only repoint the path.
+        if let index = workspaces.firstIndex(where: {
+            $0.title.caseInsensitiveCompare(title) == .orderedSame
+                && !FileManager.default.fileExists(atPath: $0.path)
+        }) {
+            workspaces[index].path = normalized.path
+            workspaces[index].updatedAt = .now
+            try persist()
+            return workspaces[index]
         }
         return try create(path: normalized.path, title: title)
     }

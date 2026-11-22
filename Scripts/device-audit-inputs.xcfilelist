@@ -116,6 +116,7 @@ $(SRCROOT)/HarnessMobile/Core/Storage/ToolResultSpillStore.swift
 $(SRCROOT)/HarnessMobile/Core/Storage/SessionStore.swift
 $(SRCROOT)/HarnessMobile/Core/Storage/WorkspaceStore.swift
 $(SRCROOT)/HarnessMobile/Core/Storage/WorkspaceRegistry.swift
+$(SRCROOT)/HarnessMobile/Core/Storage/HarnessFilesLog.swift
 $(SRCROOT)/HarnessMobile/Core/Storage/ShareHandoff.swift
 $(SRCROOT)/HarnessMobile/Core/Storage/HarnessWidgetProjection.swift
 $(SRCROOT)/HarnessMobile/Core/Browser/HarnessBrowserService.swift

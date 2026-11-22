@@ -389,7 +389,7 @@ struct ChatView: View {
                         isCameraPresented = true
                     },
                     onPickFile: {
-                        DocumentPicker.pickFileCopy(types: [.pdf, .audio, .movie]) { url in
+                        DocumentPicker.pickFileCopy(types: [.item]) { url in
                             Task { await model.stageFileAttachment(from: url) }
                         }
                     },

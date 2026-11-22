@@ -1,5 +1,6 @@
 @preconcurrency import ImageIO
 import Foundation
+import os
 import Observation
 import UIKit
 #if os(iOS) && canImport(BackgroundTasks)
@@ -226,6 +227,8 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
         selectedRunPresentation?.pendingUserQuestion
     }
     var errorMessage: String?
+    /// Short success/info text for the Files tab (shown as an alert there).
+    var workspaceNotice: String?
     var latestUsage: ModelTokenUsage? { selectedRunPresentation?.latestUsage }
     var workspaceFiles: [WorkspaceStore.FileEntry] = []
     var workspaceMounts: [WorkspaceStore.MountSnapshot] = []
@@ -3928,24 +3931,54 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
     }
 
     func importDocument(_ url: URL) async {
-        do {
-            _ = try await workspaceStore.importFile(from: url)
-            await refreshWorkspace()
-        } catch {
-            presentError(error)
-        }
+        await importDocuments([url])
     }
 
+    /// Copies any picked file as raw bytes into the workspace (Documents), with
+    /// no type filter. Successes and failures are both shown to the user.
     func importDocuments(_ urls: [URL], intoFolder name: String = "Import") async {
-        do {
-            if urls.count == 1 {
-                _ = try await workspaceStore.importFile(from: urls[0])
-            } else {
-                _ = try await workspaceStore.importFiles(urls, intoFolder: name)
+        HarnessFilesLog.logger.notice(
+            "import: start count=\(urls.count, privacy: .public) first=\(urls.first?.lastPathComponent ?? "-", privacy: .public)"
+        )
+        var imported: [String] = []
+        var failures: [String] = []
+        if urls.count <= 1 {
+            for url in urls {
+                do {
+                    let entry = try await workspaceStore.importFile(from: url)
+                    imported.append(entry.path)
+                } catch {
+                    HarnessFilesLog.logger.error(
+                        "import: failed file=\(url.lastPathComponent, privacy: .public) error=\(HarnessFilesLog.describe(error), privacy: .public)"
+                    )
+                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                }
             }
-            await refreshWorkspace()
-        } catch {
-            presentError(error)
+        } else {
+            do {
+                let entries = try await workspaceStore.importFiles(urls, intoFolder: name)
+                imported = entries.map(\.path)
+            } catch {
+                HarnessFilesLog.logger.error(
+                    "import: batch failed error=\(HarnessFilesLog.describe(error), privacy: .public)"
+                )
+                failures.append(error.localizedDescription)
+            }
+        }
+        await refreshWorkspace()
+        if !failures.isEmpty {
+            presentError(
+                NSError(
+                    domain: "HarnessMobile",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Import failed: \(failures.joined(separator: "; "))"]
+                )
+            )
+        } else if !imported.isEmpty {
+            HarnessFilesLog.logger.notice("import: done count=\(imported.count, privacy: .public)")
+            workspaceNotice = imported.count == 1
+                ? "Imported \(imported[0]). It is also in Files → On My iPhone → Harness Mobile."
+                : "Imported \(imported.count) files. They are in Files → On My iPhone → Harness Mobile."
         }
     }
 
@@ -3954,10 +3987,15 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
     }
 
     func mountWorkspaceFolder(_ url: URL) async {
+        HarnessFilesLog.logger.notice("mount: start folder=\(url.lastPathComponent, privacy: .public)")
         do {
             _ = try await workspaceStore.mountFolder(from: url)
             await refreshWorkspace()
+            workspaceNotice = "Mounted \(url.lastPathComponent)."
         } catch {
+            HarnessFilesLog.logger.error(
+                "mount: failed folder=\(url.lastPathComponent, privacy: .public) error=\(HarnessFilesLog.describe(error), privacy: .public)"
+            )
             presentError(error)
         }
     }
@@ -4031,11 +4069,37 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
             )
             return
         }
+        HarnessFilesLog.logger.notice(
+            "attach: start file=\(url.lastPathComponent, privacy: .public)"
+        )
         do {
             stagedFileReference = try await workspaceStore.stageFileAttachment(from: url)
             hasStagedFile = true
         } catch {
-            presentError(error)
+            HarnessFilesLog.logger.error(
+                "attach: rejected file=\(url.lastPathComponent, privacy: .public) error=\(HarnessFilesLog.describe(error), privacy: .public)"
+            )
+            // The chat only accepts some types as model attachments. Keep the
+            // file anyway: copy it into the workspace and say so.
+            do {
+                let entry = try await workspaceStore.importFile(from: url)
+                await refreshWorkspace()
+                presentError(
+                    NSError(
+                        domain: "HarnessMobile",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "\(url.lastPathComponent) can't be attached to the chat (\(error.localizedDescription)). It was copied to the workspace as \(entry.path) instead."]
+                    )
+                )
+            } catch let importError {
+                presentError(
+                    NSError(
+                        domain: "HarnessMobile",
+                        code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "\(url.lastPathComponent) could not be attached (\(error.localizedDescription)) or copied to the workspace (\(importError.localizedDescription))."]
+                    )
+                )
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 @preconcurrency import ImageIO
 import CryptoKit
 import Foundation
+import os
 import UniformTypeIdentifiers
 
 struct WorkspaceAdmittedImage: Sendable, Equatable {
@@ -71,6 +72,9 @@ enum ImageAdmissionError: LocalizedError, Sendable, Equatable {
 actor WorkspaceStore {
     static let maximumModelRequestImageBytes = 1 * 1_024 * 1_024
     static let maximumFileAttachmentBytes = 64 * 1_024 * 1_024
+    /// Copying a picked file into the workspace; larger than the 1 MiB text
+    /// read limit because imports are only copied, not read into a prompt.
+    static let maximumImportBytes = 256 * 1_024 * 1_024
     static let fileAttachmentTTL: TimeInterval = 7 * 24 * 60 * 60
     struct FileEntry: Codable, Sendable, Equatable {
         let path: String
@@ -154,6 +158,8 @@ actor WorkspaceStore {
     }
 
     private let root: URL
+    private var legacyRoot: URL?
+    private var didMigrateLegacyRoot = false
     private let mountStoreURL: URL
     private let allowsUnscopedMounts: Bool
     private let fileManager = FileManager.default
@@ -185,6 +191,7 @@ actor WorkspaceStore {
     ) {
         if let root {
             self.root = root.standardizedFileURL
+            self.legacyRoot = nil
             self.mountStoreURL = mountStoreURL
                 ?? root
                     .appendingPathComponent(".harness-mobile", isDirectory: true)
@@ -195,8 +202,21 @@ actor WorkspaceStore {
                 in: .userDomainMask
             )[0]
                 .appendingPathComponent("HarnessMobile", isDirectory: true)
-            self.root = base
-                .appendingPathComponent("Workspace", isDirectory: true)
+            // The workspace lives in the app's Documents folder so that it is
+            // the same folder the Files app shows under On My iPhone →
+            // Harness Mobile (UIFileSharingEnabled). Files copied in from
+            // Files appear in /workspace, and imports appear in Files.
+            // Older builds kept it in Application Support; ensureRoot()
+            // migrates that folder once.
+            let documents = FileManager.default.urls(
+                for: .documentDirectory,
+                in: .userDomainMask
+            ).first
+            self.root = (documents ?? base.appendingPathComponent("Workspace", isDirectory: true))
+                .standardizedFileURL
+            self.legacyRoot = documents == nil
+                ? nil
+                : base.appendingPathComponent("Workspace", isDirectory: true).standardizedFileURL
             self.mountStoreURL = mountStoreURL
                 ?? base
                     .appendingPathComponent("Configuration", isDirectory: true)
@@ -522,8 +542,8 @@ actor WorkspaceStore {
               sourceValues.isSymbolicLink != true else {
             throw WorkspaceError.notAFile
         }
-        guard let size = sourceValues.fileSize, size <= maximumReadableBytes else {
-            throw WorkspaceError.fileTooLarge(maximumReadableBytes)
+        guard let size = sourceValues.fileSize, size <= Self.maximumImportBytes else {
+            throw WorkspaceError.fileTooLarge(Self.maximumImportBytes)
         }
 
         let safeName = Self.sanitizedFilename(externalURL.lastPathComponent)
@@ -2183,16 +2203,53 @@ actor WorkspaceStore {
             at: root.appendingPathComponent("mounts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        Self.seedAppDocumentsIfNeeded()
+        migrateLegacyRootIfNeeded()
     }
 
-    private static func seedAppDocumentsIfNeeded() {
-        guard let documents = appDocumentsDirectory() else { return }
-        let fileManager = FileManager.default
-        try? fileManager.createDirectory(at: documents, withIntermediateDirectories: true)
-        let seed = documents.appendingPathComponent("Shared", isDirectory: true)
-        if !fileManager.fileExists(atPath: seed.path) {
-            try? fileManager.createDirectory(at: seed, withIntermediateDirectories: true)
+    /// Moves everything from the old Application Support workspace into the
+    /// Documents-backed root once. Existing names in the destination are kept
+    /// (the legacy item is renamed with a numeric suffix), nothing is deleted
+    /// unless it was moved.
+    private func migrateLegacyRootIfNeeded() {
+        guard !didMigrateLegacyRoot else { return }
+        didMigrateLegacyRoot = true
+        guard let legacyRoot,
+              legacyRoot.path != root.path,
+              fileManager.fileExists(atPath: legacyRoot.path),
+              let children = try? fileManager.contentsOfDirectory(
+                at: legacyRoot,
+                includingPropertiesForKeys: nil,
+                options: []
+              ),
+              !children.isEmpty else {
+            return
+        }
+        var moved = 0
+        var failed = 0
+        for child in children {
+            let name = child.lastPathComponent
+            if name == ".DS_Store" { continue }
+            if name == "mounts",
+               (try? fileManager.contentsOfDirectory(atPath: child.path))?.isEmpty ?? true {
+                try? fileManager.removeItem(at: child)
+                continue
+            }
+            do {
+                let destination = try uniqueDestination(for: name, in: root)
+                try fileManager.moveItem(at: child, to: destination)
+                moved += 1
+            } catch {
+                failed += 1
+                HarnessFilesLog.logger.error(
+                    "legacy workspace migration failed for \(name, privacy: .public): \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        HarnessFilesLog.logger.notice(
+            "legacy workspace migration moved=\(moved, privacy: .public) failed=\(failed, privacy: .public)"
+        )
+        if failed == 0 {
+            try? fileManager.removeItem(at: legacyRoot)
         }
     }
 
@@ -2216,20 +2273,24 @@ actor WorkspaceStore {
 
     func listAppDocumentFolders() throws -> [URL] {
         guard let documents = Self.appDocumentsDirectory() else { return [] }
-        Self.seedAppDocumentsIfNeeded()
+        try ensureRoot()
+        let reserved: Set<String> = ["mounts", "Attachments", "Inbox"]
         let contents = try fileManager.contentsOfDirectory(
             at: documents,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )
         let subfolders = contents.filter { url in
+            guard !reserved.contains(url.lastPathComponent) else { return false }
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             return values?.isDirectory == true && values?.isSymbolicLink != true
         }
         .sorted {
             $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
         }
-        return [documents] + subfolders
+        // The Documents root is the workspace itself (/workspace); mounting it
+        // inside itself would recurse, so only real subfolders are offered.
+        return subfolders
     }
 
     private static func sanitizedFilename(_ raw: String) -> String {

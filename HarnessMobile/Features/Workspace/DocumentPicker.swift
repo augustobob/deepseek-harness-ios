@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 import UniformTypeIdentifiers
 import UIKit
 
@@ -78,6 +79,7 @@ enum DocumentPicker {
         onCancel: @escaping @MainActor () -> Void
     ) {
         guard let presenter = topViewController() else {
+            HarnessFilesLog.logger.error("picker: no presenting view controller")
             onCancel()
             return
         }
@@ -88,6 +90,9 @@ enum DocumentPicker {
             asCopy: copy
         )
         picker.allowsMultipleSelection = multiple
+        HarnessFilesLog.logger.notice(
+            "picker: present types=\(types.map(\.identifier).joined(separator: ","), privacy: .public) asCopy=\(copy, privacy: .public) multiple=\(multiple, privacy: .public)"
+        )
         let coordinator = DocumentPickerCoordinator(onPick: onPick, onCancel: onCancel)
         activeCoordinator = coordinator
         picker.delegate = coordinator
@@ -140,6 +145,9 @@ final class DocumentPickerCoordinator: NSObject,
         didPickDocumentsAt urls: [URL]
     ) {
         let picked = urls
+        HarnessFilesLog.logger.notice(
+            "picker: didPick count=\(picked.count, privacy: .public) first=\(picked.first?.lastPathComponent ?? "-", privacy: .public) inPlace=\(picked.first?.path.contains("-Inbox/") == false, privacy: .public)"
+        )
         Task { @MainActor in
             guard !self.didFinish else { return }
             self.didFinish = true
@@ -153,6 +161,7 @@ final class DocumentPickerCoordinator: NSObject,
     }
 
     private func finishCancel() {
+        HarnessFilesLog.logger.notice("picker: cancelled/dismissed")
         Task { @MainActor in
             guard !self.didFinish else { return }
             self.didFinish = true

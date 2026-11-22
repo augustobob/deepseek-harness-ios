@@ -147,6 +147,28 @@ struct WorkspaceView: View {
         } message: { mount in
             Text("The source folder is not deleted; it is only removed from /workspace/mounts/\(mount.name).")
         }
+        .alert(
+            "Workspace",
+            isPresented: Binding(
+                get: { model.errorMessage != nil },
+                set: { if !$0 { model.errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { model.errorMessage = nil }
+        } message: {
+            Text(model.errorMessage ?? "")
+        }
+        .alert(
+            "Done",
+            isPresented: Binding(
+                get: { model.workspaceNotice != nil },
+                set: { if !$0 { model.workspaceNotice = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { model.workspaceNotice = nil }
+        } message: {
+            Text(model.workspaceNotice ?? "")
+        }
         .confirmationDialog(
             "Mount a folder",
             isPresented: $isExternalFolderHelpPresented,
@@ -164,7 +186,7 @@ struct WorkspaceView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The recommended path, which already works in Baixador, is to copy the folder in the Files app to On My iPhone → Harness Mobile, then use Mount from app Documents. You can also try the system picker; if Open does nothing, tap Cancel and use that option.")
+            Text("The easiest way: copy the folder in the Files app into On My iPhone → Harness Mobile. It becomes part of the workspace right away. You can also try the system picker; if Open does nothing, tap Cancel.")
         }
     }
 
@@ -270,7 +292,7 @@ private struct WorkspaceMountsSection: View {
             }
         } header: { Label("Mounted directories", systemImage: "externaldrive") }
         footer: {
-            Text("Harness Mobile appears in the Files app under On My iPhone, like Baixador. Copy a folder there and choose Mount from app Documents, or import files as copies.")
+            Text("The workspace is the Harness Mobile folder in the Files app (On My iPhone → Harness Mobile): anything you put there shows up here, and imported files appear there. Mounting a subfolder is optional.")
         }
     }
 }
