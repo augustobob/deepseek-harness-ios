@@ -66,6 +66,9 @@ private final class SystemBackgroundLocationKeepAlivePlatform: NSObject, Backgro
     }
 
     func startCoarseBackgroundUpdates() {
+        // Without the `location` UIBackgroundModes entry (foreground-only
+        // build) setting allowsBackgroundLocationUpdates raises an exception.
+        guard !ForegroundOnlyPolicy.isEnabled else { return }
         guard authorization == .always else { return }
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = false

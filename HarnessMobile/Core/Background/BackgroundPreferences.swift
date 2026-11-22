@@ -1,6 +1,23 @@
 import Foundation
 import Observation
 
+/// Fork patch (augusto/main): the app is foreground-only.
+///
+/// While enabled, every mechanism that keeps the process alive or schedules work
+/// outside the foreground is switched off: audio / location keep-alive,
+/// Continued Processing, Live Activities and BGProcessingTask wake-ups. Live runs
+/// are interrupted when the scene enters `.background` and are resumed by the
+/// existing foreground resume path. Build with
+/// `SWIFT_ACTIVE_COMPILATION_CONDITIONS=HARNESS_ALLOW_BACKGROUND` (and restore
+/// `UIBackgroundModes` in project.yml) to get the upstream behaviour back.
+enum ForegroundOnlyPolicy {
+#if HARNESS_ALLOW_BACKGROUND
+    static let isEnabled = false
+#else
+    static let isEnabled = true
+#endif
+}
+
 struct BackgroundPreferences: Codable, Equatable, Sendable {
     var isEnhancedBackgroundEnabled: Bool
     var isBackgroundLocationKeepAliveEnabled: Bool

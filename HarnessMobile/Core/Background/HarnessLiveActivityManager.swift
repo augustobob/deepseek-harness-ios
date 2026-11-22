@@ -52,7 +52,7 @@ final class HarnessLiveActivityManager {
         privacyModeEnabled: Bool,
         isEnabled: Bool
     ) async {
-        guard isEnabled else {
+        guard isEnabled, !ForegroundOnlyPolicy.isEnabled else {
             await end(runID: runID)
             return
         }
@@ -104,7 +104,7 @@ final class HarnessLiveActivityManager {
         privacyModeEnabled: Bool,
         isEnabled: Bool
     ) async {
-        guard isEnabled else {
+        guard isEnabled, !ForegroundOnlyPolicy.isEnabled else {
             await end(runID: runID)
             return
         }

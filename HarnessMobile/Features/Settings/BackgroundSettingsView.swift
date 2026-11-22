@@ -16,6 +16,15 @@ struct BackgroundSettingsView: View {
         @Bindable var preferences = preferences
 
         Form {
+            if ForegroundOnlyPolicy.isEnabled {
+                Section {
+                    Text("This build is foreground-only. Runs are paused when the app leaves the screen and resume when you come back; background keep-alive, Live Activities and scheduled wake-ups are disabled.")
+                        .font(.footnote)
+                } header: {
+                    Text("Foreground-only build")
+                }
+            }
+            Group {
             BackgroundExecutionSettingsSection(
                 isEnabled: $preferences.isEnhancedBackgroundEnabled,
                 isSystemSupported: isContinuedProcessingSupported
@@ -30,6 +39,8 @@ struct BackgroundSettingsView: View {
                 isSystemSupported: isLiveActivitySupported,
                 areActivitiesEnabled: areLiveActivitiesEnabled
             )
+            }
+            .disabled(ForegroundOnlyPolicy.isEnabled)
             BackgroundNotificationSettingsSection(
                 isEnabled: $preferences.areTaskNotificationsEnabled,
                 authorization: notificationAuthorization,

@@ -3729,6 +3729,9 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
                     for: run.identity
                 )
             }
+            if isBackgrounded, ForegroundOnlyPolicy.isEnabled {
+                await self?.interruptLiveRunsForForegroundOnly(aggregate)
+            }
             if isActive {
                 await self?.refreshTrajectory()
             }
@@ -3765,6 +3768,28 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
         }
     }
 
+    /// Foreground-only mode: stop every live root run the moment the scene
+    /// enters `.background`. The run is committed as `.interrupted` (the same
+    /// outcome an iOS expiration produces) and is marked for the normal
+    /// foreground auto-resume path, so it continues when the app comes back.
+    private func interruptLiveRunsForForegroundOnly(
+        _ aggregate: SessionRunAggregateSnapshot
+    ) async {
+        for run in aggregate.runs {
+            if case .terminal = run.phase { continue }
+            await backgroundResumeCoordinator.markSystemExpiration(run.identity)
+            _ = try? await sessionRunRegistry.interrupt(run.identity)
+            await traceStore.record(
+                HarnessTraceDraft(
+                    kind: .backgroundTask,
+                    sessionID: run.identity.sessionID,
+                    runID: run.identity.runID,
+                    name: "foreground_only/interrupted_on_background"
+                )
+            )
+        }
+    }
+
     /// Reconcile the audio survival leg against the durable run registry. The
     /// audio engine never infers liveness from the selected UI session, so
     /// switching sessions cannot accidentally stop another live root run.
@@ -3788,8 +3813,10 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
                 BackgroundKeepAliveInputs(
                 isBackgrounded: isBackgrounded,
                 hasLiveRoot: liveRootCount > 0,
-                enhancedAudioRequested: backgroundPreferences.isEnhancedBackgroundEnabled,
-                locationRequested: backgroundPreferences.isBackgroundLocationKeepAliveEnabled,
+                enhancedAudioRequested: backgroundPreferences.isEnhancedBackgroundEnabled
+                    && !ForegroundOnlyPolicy.isEnabled,
+                locationRequested: backgroundPreferences.isBackgroundLocationKeepAliveEnabled
+                    && !ForegroundOnlyPolicy.isEnabled,
                 hasFiniteBackgroundLease: legacyBackgroundTaskLease.hasSystemTask,
                 hasContinuedProcessing: continuedProcessingController.hasAttachedSystemTask,
                 isLowPowerMode: processInfo.isLowPowerModeEnabled,
@@ -8601,6 +8628,7 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
         }
 
         guard useContinuedProcessing,
+              !ForegroundOnlyPolicy.isEnabled,
               backgroundPreferences.isEnhancedBackgroundEnabled else {
             let context = ContinuedProcessingContext(runID: runID) { _ in }
             _ = await runOperation(context)
@@ -9140,6 +9168,7 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
 
 #if os(iOS) && canImport(BackgroundTasks)
     private func requestBackgroundRecovery() {
+        guard !ForegroundOnlyPolicy.isEnabled else { return }
         guard scheduleBackgroundTasksRegistered else { return }
         do {
             // Recovery is a local wake-up opportunity. Requiring network here
@@ -9191,6 +9220,12 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
     /// claimDue remains the source of truth when iOS actually launches us.
     private func scheduleNextBackgroundTurn() async {
         guard scheduleBackgroundTasksRegistered else { return }
+        if ForegroundOnlyPolicy.isEnabled {
+            // Foreground-only: never ask iOS to wake the app later, and drop
+            // any request left over from a previous (stock) build.
+            scheduleBackgroundController.cancel()
+            return
+        }
         guard isReady || !sessions.isEmpty else { return }
         guard let runAt = await scheduleStore.nextPendingRunAt() else {
             scheduleBackgroundController.cancel()

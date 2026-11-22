@@ -59,10 +59,13 @@ targets:
         DEVELOPMENT_TEAM: 2SH3TUR2JL
         OTHER_LDFLAGS: $(inherited) -ObjC
     dependencies:
-      - target: HarnessMobileLiveActivity
-        embed: true
-      - target: HarnessMobileShare
-        embed: true
+      # Foreground-only fork: the Live Activity and Share extensions are not
+      # embedded (extensions break with a fixed-bundle-id sideload profile).
+      # Re-add both lines to restore them.
+      # - target: HarnessMobileLiveActivity
+      #   embed: true
+      # - target: HarnessMobileShare
+      #   embed: true
       - framework: Vendor/OpenMinisISH/Artifacts/HarnessISH.xcframework
         embed: false
       - sdk: HealthKit.framework
@@ -100,10 +103,8 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - com.llf.harnessmobile.continued-processing.*
           - com.llf.harnessmobile.schedule-processing
-        UIBackgroundModes:
-          - audio
-          - location
-          - processing
+        # Foreground-only fork: no UIBackgroundModes (audio / location /
+        # processing). See ForegroundOnlyPolicy and README-FOREGROUND-ONLY.md.
         UILaunchScreen: {}
         UIApplicationSupportsIndirectInputEvents: true
         UISupportedInterfaceOrientations:
