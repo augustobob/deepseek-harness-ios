@@ -541,10 +541,48 @@ actor WorkspaceStore {
         )
 #endif
         return FileEntry(
-            path: destination.lastPathComponent,
+            path: try relativeWorkspacePath(for: destination),
             size: Int64(size),
             modifiedAt: .now
         )
+    }
+
+    /// Copies one or more picked files (typically `asCopy: true` URLs) into a
+    /// new folder under the private workspace root. Used when a live mount of
+    /// an external folder is not available.
+    @discardableResult
+    func importFiles(_ urls: [URL], intoFolder preferredName: String = "Import") throws -> [FileEntry] {
+        try ensureRoot()
+        let rawName = preferredName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folderName = Self.sanitizedFilename(rawName.isEmpty ? "Import" : rawName)
+        let folder = try uniqueDirectory(named: folderName)
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        var entries: [FileEntry] = []
+        var firstError: Error?
+        for url in urls {
+            do {
+                let entry = try importFile(from: url)
+                // importFile places the copy at the workspace root; move it
+                // into the destination folder and re-emit the relative path.
+                let current = root.appendingPathComponent(entry.path)
+                let moved = try uniqueDestination(for: current.lastPathComponent, in: folder)
+                try fileManager.moveItem(at: current, to: moved)
+                entries.append(
+                    FileEntry(
+                        path: try relativeWorkspacePath(for: moved),
+                        size: entry.size,
+                        modifiedAt: entry.modifiedAt
+                    )
+                )
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if entries.isEmpty {
+            try? fileManager.removeItem(at: folder)
+            throw firstError ?? WorkspaceError.notAFile
+        }
+        return entries
     }
 
     func stagePluginArchive(from externalURL: URL) throws -> String {
@@ -2101,8 +2139,9 @@ actor WorkspaceStore {
         }
     }
 
-    private func uniqueDestination(for filename: String) throws -> URL {
-        let base = root.appendingPathComponent(filename)
+    private func uniqueDestination(for filename: String, in directory: URL? = nil) throws -> URL {
+        let folder = directory ?? root
+        let base = folder.appendingPathComponent(filename)
         if !fileManager.fileExists(atPath: base.path) {
             return base
         }
@@ -2113,12 +2152,26 @@ actor WorkspaceStore {
             let candidateName = extensionName.isEmpty
                 ? "\(stem)-\(index)"
                 : "\(stem)-\(index).\(extensionName)"
-            let candidate = root.appendingPathComponent(candidateName)
+            let candidate = folder.appendingPathComponent(candidateName)
             if !fileManager.fileExists(atPath: candidate.path) {
                 return candidate
             }
         }
         throw WorkspaceError.tooManyConflicts
+    }
+
+    private func uniqueDirectory(named name: String) throws -> URL {
+        try uniqueDestination(for: name)
+    }
+
+    private func relativeWorkspacePath(for url: URL) throws -> String {
+        let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
+        let filePath = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard filePath == rootPath || filePath.hasPrefix(rootPath + "/") else {
+            throw WorkspaceError.pathEscapesWorkspace
+        }
+        if filePath == rootPath { return "" }
+        return String(filePath.dropFirst(rootPath.count + 1))
     }
 
     private func ensureRoot() throws {
@@ -2130,6 +2183,17 @@ actor WorkspaceStore {
             at: root.appendingPathComponent("mounts", isDirectory: true),
             withIntermediateDirectories: true
         )
+        Self.seedAppDocumentsIfNeeded()
+    }
+
+    private static func seedAppDocumentsIfNeeded() {
+        guard let documents = appDocumentsDirectory() else { return }
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(at: documents, withIntermediateDirectories: true)
+        let seed = documents.appendingPathComponent("Shared", isDirectory: true)
+        if !fileManager.fileExists(atPath: seed.path) {
+            try? fileManager.createDirectory(at: seed, withIntermediateDirectories: true)
+        }
     }
 
     private static func isContained(_ child: URL, in parent: URL) -> Bool {
@@ -2152,25 +2216,20 @@ actor WorkspaceStore {
 
     func listAppDocumentFolders() throws -> [URL] {
         guard let documents = Self.appDocumentsDirectory() else { return [] }
-        try fileManager.createDirectory(at: documents, withIntermediateDirectories: true)
-        // Seed a visible folder so "On My iPhone > Harness Mobile" is never empty
-        // and the user has something to drop files into from the Files app.
-        let seed = documents.appendingPathComponent("Shared", isDirectory: true)
-        if !fileManager.fileExists(atPath: seed.path) {
-            try? fileManager.createDirectory(at: seed, withIntermediateDirectories: true)
-        }
+        Self.seedAppDocumentsIfNeeded()
         let contents = try fileManager.contentsOfDirectory(
             at: documents,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )
-        return contents.filter { url in
+        let subfolders = contents.filter { url in
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
             return values?.isDirectory == true && values?.isSymbolicLink != true
         }
         .sorted {
             $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
         }
+        return [documents] + subfolders
     }
 
     private static func sanitizedFilename(_ raw: String) -> String {

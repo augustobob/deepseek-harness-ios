@@ -3936,6 +3936,19 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
         }
     }
 
+    func importDocuments(_ urls: [URL], intoFolder name: String = "Import") async {
+        do {
+            if urls.count == 1 {
+                _ = try await workspaceStore.importFile(from: urls[0])
+            } else {
+                _ = try await workspaceStore.importFiles(urls, intoFolder: name)
+            }
+            await refreshWorkspace()
+        } catch {
+            presentError(error)
+        }
+    }
+
     func workspaceFileData(path: String) async throws -> Data {
         try await workspaceStore.readData(path: path)
     }

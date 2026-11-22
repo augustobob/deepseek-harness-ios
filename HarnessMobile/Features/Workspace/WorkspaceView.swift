@@ -5,6 +5,7 @@ struct WorkspaceView: View {
     @Environment(AppModel.self) private var model
     @State private var isAppDocumentsPickerPresented = false
     @State private var appDocumentFolders: [URL] = []
+    @State private var isExternalFolderHelpPresented = false
     @State private var reauthorizingMountID: UUID?
     @State private var mountPendingRemoval: WorkspaceStore.MountSnapshot?
     @State private var isRemovalConfirmationPresented = false
@@ -32,20 +33,23 @@ struct WorkspaceView: View {
                         )
 
                         VStack(spacing: HarnessTheme.Spacing.small) {
+                            Button("Mount from app Documents", systemImage: "folder.badge.plus") {
+                                reauthorizingMountID = nil
+                                presentAppDocumentsPicker()
+                            }
+                            .buttonStyle(.borderedProminent)
                             HStack(spacing: HarnessTheme.Spacing.small) {
                                 Button("Import file", systemImage: "doc.badge.plus") {
                                     presentFileImporter()
                                 }
                                 .buttonStyle(.bordered)
-
-                                Button("Mount folder", systemImage: "externaldrive.badge.plus") {
-                                    presentSystemFolderPicker()
+                                Button("Import files into a folder", systemImage: "folder.badge.plus") {
+                                    presentMultiFileImporter()
                                 }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.bordered)
                             }
-                            Button("Mount from app Documents", systemImage: "folder.badge.plus") {
-                                reauthorizingMountID = nil
-                                presentAppDocumentsPicker()
+                            Button("Try external folder…", systemImage: "externaldrive.badge.plus") {
+                                isExternalFolderHelpPresented = true
                             }
                             .buttonStyle(.bordered)
                         }
@@ -71,15 +75,18 @@ struct WorkspaceView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Import file", systemImage: "doc.badge.plus") {
-                        presentFileImporter()
-                    }
-                    Button("Mount folder", systemImage: "externaldrive.badge.plus") {
-                        presentSystemFolderPicker()
-                    }
                     Button("Mount from app Documents", systemImage: "folder.badge.plus") {
                         reauthorizingMountID = nil
                         presentAppDocumentsPicker()
+                    }
+                    Button("Import file", systemImage: "doc.badge.plus") {
+                        presentFileImporter()
+                    }
+                    Button("Import files into a folder", systemImage: "folder.badge.plus") {
+                        presentMultiFileImporter()
+                    }
+                    Button("Try external folder…", systemImage: "externaldrive.badge.plus") {
+                        isExternalFolderHelpPresented = true
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -133,6 +140,22 @@ struct WorkspaceView: View {
         } message: { mount in
             Text("The source folder is not deleted; it is only removed from /workspace/mounts/\(mount.name).")
         }
+        .confirmationDialog(
+            "External folders often cannot be opened in this install",
+            isPresented: $isExternalFolderHelpPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Use app Documents") {
+                reauthorizingMountID = nil
+                presentAppDocumentsPicker()
+            }
+            Button("Try the system picker anyway") {
+                presentSystemFolderPicker()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("iOS will not keep access to a folder outside the app in this sideloaded install. The reliable option is to copy the folder in the Files app to On My iPhone → Harness Mobile, then use Mount from app Documents. If you try the system picker and Open does nothing, tap Cancel and use that option.")
+        }
     }
 
     private func toggleWritable(_ mount: WorkspaceStore.MountSnapshot) {
@@ -145,10 +168,14 @@ struct WorkspaceView: View {
     }
 
     private func presentFileImporter() {
-        // Broad type list: the store validates size and extension itself, and
-        // narrow lists leave many files greyed out in Files.
         DocumentPicker.pickFileCopy(types: [.item]) { url in
             Task { await model.importDocument(url) }
+        }
+    }
+
+    private func presentMultiFileImporter() {
+        DocumentPicker.pickFilesCopy(types: [.item]) { urls in
+            Task { await model.importDocuments(urls, intoFolder: "Import") }
         }
     }
 
@@ -187,11 +214,7 @@ struct WorkspaceView: View {
 
     private func reauthorize(_ mount: WorkspaceStore.MountSnapshot) {
         reauthorizingMountID = mount.id
-        if SideloadAppIdentity.openInPlaceGrantLikelyDenied {
-            presentAppDocumentsPicker()
-        } else {
-            presentSystemFolderPicker(keepingReauthorization: true)
-        }
+        presentAppDocumentsPicker()
     }
 
     private func requestRemoval(_ mount: WorkspaceStore.MountSnapshot) {
@@ -237,11 +260,7 @@ private struct WorkspaceMountsSection: View {
             }
         } header: { Label("Mounted directories", systemImage: "externaldrive") }
         footer: {
-            if SideloadAppIdentity.openInPlaceGrantLikelyDenied {
-                Text(SideloadAppIdentity.mismatchWarning)
-            } else if SideloadAppIdentity.hasEmbeddedProvision {
-                Text("If Open in the system picker does nothing, copy the folder in Files to On My iPhone → Harness Mobile, then use Mount from app Documents.")
-            }
+            Text("To mount a folder, copy it in the Files app to On My iPhone → Harness Mobile, then choose Mount from app Documents. Importing individual files always copies them into the workspace.")
         }
     }
 }
@@ -399,7 +418,7 @@ private struct AppDocumentsFolderPicker: View {
                     Button {
                         onPick(url)
                     } label: {
-                        Label(url.lastPathComponent, systemImage: "folder")
+                        Label(Self.displayName(for: url), systemImage: "folder")
                     }
                 }
             }
@@ -411,5 +430,13 @@ private struct AppDocumentsFolderPicker: View {
                 Button("Cancel") { dismiss() }
             }
         }
+    }
+
+    private static func displayName(for url: URL) -> String {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        if let documents, url.standardizedFileURL == documents.standardizedFileURL {
+            return "App Documents (root)"
+        }
+        return url.lastPathComponent
     }
 }

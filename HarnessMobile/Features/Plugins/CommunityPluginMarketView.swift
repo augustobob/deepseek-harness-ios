@@ -104,8 +104,8 @@ struct CommunityPluginMarketView: View {
                 presentedSheet = .github
             }
             Button("Import ZIP") {
-                // Let the confirmation dialog finish dismissing first.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
                     DocumentPicker.pickFileCopy(types: [.zip]) { url in
                         Task { _ = await model.importISHMarketplacePluginArchive(from: url) }
                     }
