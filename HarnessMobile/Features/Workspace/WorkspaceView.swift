@@ -5,6 +5,8 @@ struct WorkspaceView: View {
     @Environment(AppModel.self) private var model
     @State private var isFileImporterPresented = false
     @State private var isFolderImporterPresented = false
+    @State private var isAppDocumentsPickerPresented = false
+    @State private var appDocumentFolders: [URL] = []
     @State private var reauthorizingMountID: UUID?
     @State private var mountPendingRemoval: WorkspaceStore.MountSnapshot?
     @State private var isRemovalConfirmationPresented = false
@@ -31,17 +33,23 @@ struct WorkspaceView: View {
                             description: Text("Import a file or mount an external folder to start using the workspace.")
                         )
 
-                        HStack(spacing: HarnessTheme.Spacing.small) {
-                            Button("Import file", systemImage: "doc.badge.plus") {
-                                isFileImporterPresented = true
+                        VStack(spacing: HarnessTheme.Spacing.small) {
+                            HStack(spacing: HarnessTheme.Spacing.small) {
+                                Button("Import file", systemImage: "doc.badge.plus") {
+                                    isFileImporterPresented = true
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button("Mount folder", systemImage: "externaldrive.badge.plus") {
+                                    presentSystemFolderPicker()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            Button("Mount from app Documents", systemImage: "folder.badge.plus") {
+                                reauthorizingMountID = nil
+                                presentAppDocumentsPicker()
                             }
                             .buttonStyle(.bordered)
-
-                            Button("Mount folder", systemImage: "externaldrive.badge.plus") {
-                                reauthorizingMountID = nil
-                                isFolderImporterPresented = true
-                            }
-                            .buttonStyle(.borderedProminent)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -69,8 +77,11 @@ struct WorkspaceView: View {
                         isFileImporterPresented = true
                     }
                     Button("Mount folder", systemImage: "externaldrive.badge.plus") {
+                        presentSystemFolderPicker()
+                    }
+                    Button("Mount from app Documents", systemImage: "folder.badge.plus") {
                         reauthorizingMountID = nil
-                        isFolderImporterPresented = true
+                        presentAppDocumentsPicker()
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -81,54 +92,70 @@ struct WorkspaceView: View {
         .refreshable {
             await model.refreshWorkspace(forceMountRefresh: true)
         }
-        .fileImporter(
-            isPresented: $isFileImporterPresented,
-            allowedContentTypes: [
-                .plainText,
-                .json,
-                .commaSeparatedText,
-                .xml,
-                .yaml
-            ]
-        ) { result in
-            switch result {
-            case let .success(url):
-                Task {
-                    await model.importDocument(url)
-                }
-            case let .failure(error):
-                model.presentError(error)
-            }
-        }
-        .fileExporter(
-            isPresented: $isFileExporterPresented,
-            document: exportDocument,
-            contentType: exportContentType,
-            defaultFilename: exportFilename
-        ) { result in
-            exportDocument = nil
-            if case let .failure(error) = result {
-                model.presentError(error)
-            }
-        }
-        .fileImporter(
-            isPresented: $isFolderImporterPresented,
-            allowedContentTypes: [.folder]
-        ) { result in
-            switch result {
-            case let .success(url):
-                let mountID = reauthorizingMountID
-                reauthorizingMountID = nil
-                Task {
-                    if let mountID {
-                        await model.reauthorizeWorkspaceMount(id: mountID, url: url)
-                    } else {
-                        await model.mountWorkspaceFolder(url)
+        // Each presentation lives on its own background node. SwiftUI only
+        // drives one fileImporter/fileExporter reliably per view.
+        .background {
+            Color.clear
+                .fileImporter(
+                    isPresented: $isFileImporterPresented,
+                    allowedContentTypes: [
+                        .plainText,
+                        .json,
+                        .commaSeparatedText,
+                        .xml,
+                        .yaml
+                    ]
+                ) { result in
+                    switch result {
+                    case let .success(url):
+                        Task {
+                            await model.importDocument(url)
+                        }
+                    case let .failure(error):
+                        model.presentError(error)
                     }
                 }
-            case let .failure(error):
+        }
+        .background {
+            Color.clear
+                .fileExporter(
+                    isPresented: $isFileExporterPresented,
+                    document: exportDocument,
+                    contentType: exportContentType,
+                    defaultFilename: exportFilename
+                ) { result in
+                    exportDocument = nil
+                    if case let .failure(error) = result {
+                        model.presentError(error)
+                    }
+                }
+        }
+        .sheet(isPresented: $isFolderImporterPresented, onDismiss: {
+            if reauthorizingMountID != nil && !isAppDocumentsPickerPresented {
                 reauthorizingMountID = nil
-                model.presentError(error)
+            }
+        }) {
+            FolderDocumentPicker(
+                onPick: { url in
+                    isFolderImporterPresented = false
+                    handlePickedFolder(url)
+                },
+                onCancel: {
+                    isFolderImporterPresented = false
+                    reauthorizingMountID = nil
+                }
+            )
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $isAppDocumentsPickerPresented) {
+            NavigationStack {
+                AppDocumentsFolderPicker(
+                    folders: appDocumentFolders,
+                    onPick: { url in
+                        isAppDocumentsPickerPresented = false
+                        handlePickedFolder(url)
+                    }
+                )
             }
         }
         .confirmationDialog(
@@ -160,9 +187,43 @@ struct WorkspaceView: View {
         }
     }
 
+    private func presentSystemFolderPicker() {
+        reauthorizingMountID = nil
+        isFolderImporterPresented = true
+    }
+
+    private func presentAppDocumentsPicker() {
+        Task {
+            appDocumentFolders = await model.listAppDocumentFolders()
+            isAppDocumentsPickerPresented = true
+        }
+    }
+
+    private func handlePickedFolder(_ url: URL) {
+        let accessed = url.startAccessingSecurityScopedResource()
+        let mountID = reauthorizingMountID
+        reauthorizingMountID = nil
+        Task {
+            defer {
+                if accessed {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            if let mountID {
+                await model.reauthorizeWorkspaceMount(id: mountID, url: url)
+            } else {
+                await model.mountWorkspaceFolder(url)
+            }
+        }
+    }
+
     private func reauthorize(_ mount: WorkspaceStore.MountSnapshot) {
         reauthorizingMountID = mount.id
-        isFolderImporterPresented = true
+        if SideloadAppIdentity.openInPlaceGrantLikelyDenied {
+            presentAppDocumentsPicker()
+        } else {
+            isFolderImporterPresented = true
+        }
     }
 
     private func requestRemoval(_ mount: WorkspaceStore.MountSnapshot) {
@@ -207,6 +268,13 @@ private struct WorkspaceMountsSection: View {
                 }
             }
         } header: { Label("Mounted directories", systemImage: "externaldrive") }
+        footer: {
+            if SideloadAppIdentity.openInPlaceGrantLikelyDenied {
+                Text(SideloadAppIdentity.mismatchWarning)
+            } else if SideloadAppIdentity.hasEmbeddedProvision {
+                Text("If Open in the system picker does nothing, copy the folder in Files to On My iPhone → Harness Mobile, then use Mount from app Documents.")
+            }
+        }
     }
 }
 
@@ -341,6 +409,39 @@ private struct WorkspaceFileRow: View {
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("Export \(file.path)")
+        }
+    }
+}
+
+private struct AppDocumentsFolderPicker: View {
+    let folders: [URL]
+    let onPick: (URL) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            if folders.isEmpty {
+                ContentUnavailableView(
+                    "No folders in app Documents",
+                    systemImage: "folder",
+                    description: Text("In the Files app, copy a folder to On My iPhone → Harness Mobile, then return here.")
+                )
+            } else {
+                ForEach(folders, id: \.path) { url in
+                    Button {
+                        onPick(url)
+                    } label: {
+                        Label(url.lastPathComponent, systemImage: "folder")
+                    }
+                }
+            }
+        }
+        .navigationTitle("App Documents")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
         }
     }
 }

@@ -478,6 +478,29 @@ final class WorkspaceStoreTests: XCTestCase {
         }
     }
 
+    func testDocumentsFolderCanMountWithoutSecurityScope() async throws {
+        let root = temporaryDirectory()
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let external = documents.appendingPathComponent(
+            "HarnessMobileTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: external)
+        }
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        try Data("docs".utf8).write(to: external.appendingPathComponent("note.md"))
+
+        let store = WorkspaceStore(root: root, allowsUnscopedMounts: false)
+        let mount = try await store.mountFolder(from: external, preferredName: "Docs")
+        XCTAssertEqual(mount.status, .active)
+        XCTAssertEqual(try await store.readText(path: "mounts/Docs/note.md"), "docs")
+
+        let listed = try await store.listAppDocumentFolders()
+        XCTAssertTrue(listed.contains(where: { $0.lastPathComponent == external.lastPathComponent }))
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("HarnessMobileTests-\(UUID().uuidString)", isDirectory: true)

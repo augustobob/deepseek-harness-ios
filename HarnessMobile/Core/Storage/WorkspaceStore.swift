@@ -1635,7 +1635,10 @@ actor WorkspaceStore {
         }
 
         let startedScope = resolvedURL.startAccessingSecurityScopedResource()
-        guard startedScope || allowsUnscopedMounts else {
+        // Folders already inside the app Documents container do not need a
+        // security-scoped grant. That path is the sideload fallback when the
+        // system picker refuses Open on a resigned build.
+        guard startedScope || allowsUnscopedMounts || Self.isInsideAppDocuments(resolvedURL) else {
             mountActivations[record.id] = MountActivation(
                 status: .permissionDenied,
                 failureMessage: "iOS revoked access to this folder. Grant access again."
@@ -2133,6 +2136,35 @@ actor WorkspaceStore {
         let childPath = child.standardizedFileURL.path
         let parentPath = parent.standardizedFileURL.path
         return childPath == parentPath || childPath.hasPrefix(parentPath + "/")
+    }
+
+    private static func appDocumentsDirectory() -> URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+    }
+
+    private static func isInsideAppDocuments(_ url: URL) -> Bool {
+        guard let documents = appDocumentsDirectory() else { return false }
+        return isContained(
+            url.resolvingSymlinksInPath().standardizedFileURL,
+            in: documents.resolvingSymlinksInPath().standardizedFileURL
+        )
+    }
+
+    func listAppDocumentFolders() throws -> [URL] {
+        guard let documents = Self.appDocumentsDirectory() else { return [] }
+        try fileManager.createDirectory(at: documents, withIntermediateDirectories: true)
+        let contents = try fileManager.contentsOfDirectory(
+            at: documents,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )
+        return contents.filter { url in
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            return values?.isDirectory == true && values?.isSymbolicLink != true
+        }
+        .sorted {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }
     }
 
     private static func sanitizedFilename(_ raw: String) -> String {

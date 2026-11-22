@@ -77,6 +77,8 @@ targets:
       properties:
         CFBundleDisplayName: Harness Mobile
         ITSAppUsesNonExemptEncryption: false
+        LSSupportsOpeningDocumentsInPlace: true
+        UIFileSharingEnabled: true
         NSSupportsLiveActivities: true
         NSCameraUsageDescription: Only used when you deliberately take a photo and hand it to the local OCR tool.
         NSPhotoLibraryUsageDescription: Only reads the items you deliberately pick for local OCR analysis.

@@ -27,6 +27,8 @@
 	<string>1</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NFCReaderUsageDescription</key>
 	<string>Only starts a single system scan session when you deliberately approve the NFC tool.</string>
 	<key>NSAppleMusicUsageDescription</key>
@@ -74,6 +76,8 @@
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>

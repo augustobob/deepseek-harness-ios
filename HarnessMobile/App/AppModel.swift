@@ -3949,6 +3949,15 @@ final class AppModel: ObservableObject, SessionControlling, SettingsControlling,
         }
     }
 
+    func listAppDocumentFolders() async -> [URL] {
+        do {
+            return try await workspaceStore.listAppDocumentFolders()
+        } catch {
+            presentError(error)
+            return []
+        }
+    }
+
     func reauthorizeWorkspaceMount(id: UUID, url: URL) async {
         do {
             _ = try await workspaceStore.reauthorizeMount(id: id, with: url)
