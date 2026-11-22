@@ -47,14 +47,7 @@ enum DocumentPicker {
     /// Opens the Files app on this app's Documents folder, the same
     /// `shareddocuments://` trick Baixador uses.
     static func openAppDocumentsInFiles() {
-        guard let path = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        ).first?.path else { return }
-        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
-        if let url = URL(string: "shareddocuments://" + encoded) {
-            UIApplication.shared.open(url)
-        }
+        AppDocumentsFilesLink.open()
     }
 
     /// Optional attempt to pick an external folder in place.

@@ -1346,4 +1346,21 @@ private enum VisionCapabilityAnalyzer {
         }
     }
 }
+
+/// Opens On My iPhone → Harness Mobile in the Files app (same
+/// `shareddocuments://` URL Baixador uses). Lives here because this file is
+/// the audited `UIApplication.shared.open` boundary.
+@MainActor
+enum AppDocumentsFilesLink {
+    static func open() {
+        guard let path = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first?.path else { return }
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        if let url = URL(string: "shareddocuments://" + encoded) {
+            UIApplication.shared.open(url)
+        }
+    }
+}
 #endif
