@@ -212,6 +212,7 @@ $(SRCROOT)/HarnessMobile/Features/Terminal/OpenMinis/TerminalTypes.swift
 $(SRCROOT)/HarnessMobile/Features/Trajectory/TrajectoryView.swift
 $(SRCROOT)/HarnessMobile/Features/WorkState/ConversationWorkStateDock.swift
 $(SRCROOT)/HarnessMobile/Features/WorkState/WorkStateView.swift
+$(SRCROOT)/HarnessMobile/Features/Workspace/DocumentPicker.swift
 $(SRCROOT)/HarnessMobile/Features/Workspace/WorkspaceView.swift
 $(SRCROOT)/HarnessMobile/SystemIntegration/HarnessAppIntents.swift
 $(SRCROOT)/HarnessMobileLiveActivity/HarnessLiveActivityBundle.swift
