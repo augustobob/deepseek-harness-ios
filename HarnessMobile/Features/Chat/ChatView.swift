@@ -11,7 +11,6 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var isCameraPresented = false
-    @State private var isFileImporterPresented = false
     @State private var triggerSuggestions: InputTriggerSuggestionSnapshot?
     @State private var editingQueuedInput: QueuedAgentInput?
     @State private var queuedEditText = ""
@@ -116,30 +115,6 @@ struct ChatView: View {
             } catch is CancellationError {
                 return
             } catch {
-                model.presentError(error)
-            }
-        }
-        .fileImporter(
-            isPresented: $isFileImporterPresented,
-            allowedContentTypes: [.pdf, .audio, .movie],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case let .success(urls):
-                guard let url = urls.first else {
-                    model.presentError(
-                        NSError(
-                            domain: "HarnessMobile",
-                            code: 400,
-                            userInfo: [
-                                NSLocalizedDescriptionKey: "No files to import."
-                            ]
-                        )
-                    )
-                    return
-                }
-                Task { await model.stageFileAttachment(from: url) }
-            case let .failure(error):
                 model.presentError(error)
             }
         }
@@ -414,7 +389,9 @@ struct ChatView: View {
                         isCameraPresented = true
                     },
                     onPickFile: {
-                        isFileImporterPresented = true
+                        DocumentPicker.pickFileCopy(types: [.pdf, .audio, .movie]) { url in
+                            Task { await model.stageFileAttachment(from: url) }
+                        }
                     },
                     onShowCommands: showCommands,
                     onSelectSuggestion: selectSuggestion,

@@ -27,7 +27,6 @@ struct CommunityPluginMarketView: View {
     @State private var mode = CommunityPluginMarketMode.catalog
     @State private var query = ""
     @State private var presentedSheet: CommunityPluginMarketSheet?
-    @State private var isFileImporterPresented = false
     @State private var isActionsPresented = false
 
     var body: some View {
@@ -105,7 +104,12 @@ struct CommunityPluginMarketView: View {
                 presentedSheet = .github
             }
             Button("Import ZIP") {
-                isFileImporterPresented = true
+                // Let the confirmation dialog finish dismissing first.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    DocumentPicker.pickFileCopy(types: [.zip]) { url in
+                        Task { _ = await model.importISHMarketplacePluginArchive(from: url) }
+                    }
+                }
             }
             Button("Clear download cache") {
                 Task { await model.clearISHPluginMarketplaceCache() }
@@ -116,21 +120,6 @@ struct CommunityPluginMarketView: View {
             switch sheet {
             case .github:
                 CommunityPluginGitHubInstallSheet()
-            }
-        }
-        .fileImporter(
-            isPresented: $isFileImporterPresented,
-            allowedContentTypes: [.zip],
-            allowsMultipleSelection: false
-        ) { result in
-            guard case let .success(urls) = result, let url = urls.first else {
-                if case let .failure(error) = result {
-                    model.reportISHPluginMarketplaceError(error)
-                }
-                return
-            }
-            Task {
-                _ = await model.importISHMarketplacePluginArchive(from: url)
             }
         }
         .task {

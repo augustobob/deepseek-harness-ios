@@ -2153,6 +2153,12 @@ actor WorkspaceStore {
     func listAppDocumentFolders() throws -> [URL] {
         guard let documents = Self.appDocumentsDirectory() else { return [] }
         try fileManager.createDirectory(at: documents, withIntermediateDirectories: true)
+        // Seed a visible folder so "On My iPhone > Harness Mobile" is never empty
+        // and the user has something to drop files into from the Files app.
+        let seed = documents.appendingPathComponent("Shared", isDirectory: true)
+        if !fileManager.fileExists(atPath: seed.path) {
+            try? fileManager.createDirectory(at: seed, withIntermediateDirectories: true)
+        }
         let contents = try fileManager.contentsOfDirectory(
             at: documents,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],

@@ -3,8 +3,6 @@ import UniformTypeIdentifiers
 
 struct WorkspaceView: View {
     @Environment(AppModel.self) private var model
-    @State private var isFileImporterPresented = false
-    @State private var isFolderImporterPresented = false
     @State private var isAppDocumentsPickerPresented = false
     @State private var appDocumentFolders: [URL] = []
     @State private var reauthorizingMountID: UUID?
@@ -36,7 +34,7 @@ struct WorkspaceView: View {
                         VStack(spacing: HarnessTheme.Spacing.small) {
                             HStack(spacing: HarnessTheme.Spacing.small) {
                                 Button("Import file", systemImage: "doc.badge.plus") {
-                                    isFileImporterPresented = true
+                                    presentFileImporter()
                                 }
                                 .buttonStyle(.bordered)
 
@@ -74,7 +72,7 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button("Import file", systemImage: "doc.badge.plus") {
-                        isFileImporterPresented = true
+                        presentFileImporter()
                     }
                     Button("Mount folder", systemImage: "externaldrive.badge.plus") {
                         presentSystemFolderPicker()
@@ -92,30 +90,6 @@ struct WorkspaceView: View {
         .refreshable {
             await model.refreshWorkspace(forceMountRefresh: true)
         }
-        // Each presentation lives on its own background node. SwiftUI only
-        // drives one fileImporter/fileExporter reliably per view.
-        .background {
-            Color.clear
-                .fileImporter(
-                    isPresented: $isFileImporterPresented,
-                    allowedContentTypes: [
-                        .plainText,
-                        .json,
-                        .commaSeparatedText,
-                        .xml,
-                        .yaml
-                    ]
-                ) { result in
-                    switch result {
-                    case let .success(url):
-                        Task {
-                            await model.importDocument(url)
-                        }
-                    case let .failure(error):
-                        model.presentError(error)
-                    }
-                }
-        }
         .background {
             Color.clear
                 .fileExporter(
@@ -129,23 +103,6 @@ struct WorkspaceView: View {
                         model.presentError(error)
                     }
                 }
-        }
-        .sheet(isPresented: $isFolderImporterPresented, onDismiss: {
-            if reauthorizingMountID != nil && !isAppDocumentsPickerPresented {
-                reauthorizingMountID = nil
-            }
-        }) {
-            FolderDocumentPicker(
-                onPick: { url in
-                    isFolderImporterPresented = false
-                    handlePickedFolder(url)
-                },
-                onCancel: {
-                    isFolderImporterPresented = false
-                    reauthorizingMountID = nil
-                }
-            )
-            .ignoresSafeArea()
         }
         .sheet(isPresented: $isAppDocumentsPickerPresented) {
             NavigationStack {
@@ -187,9 +144,20 @@ struct WorkspaceView: View {
         }
     }
 
-    private func presentSystemFolderPicker() {
-        reauthorizingMountID = nil
-        isFolderImporterPresented = true
+    private func presentFileImporter() {
+        // Broad type list: the store validates size and extension itself, and
+        // narrow lists leave many files greyed out in Files.
+        DocumentPicker.pickFileCopy(types: [.item]) { url in
+            Task { await model.importDocument(url) }
+        }
+    }
+
+    private func presentSystemFolderPicker(keepingReauthorization: Bool = false) {
+        if !keepingReauthorization { reauthorizingMountID = nil }
+        DocumentPicker.pickFolderInPlace(
+            onPick: { url in handlePickedFolder(url) },
+            onCancel: { reauthorizingMountID = nil }
+        )
     }
 
     private func presentAppDocumentsPicker() {
@@ -222,7 +190,7 @@ struct WorkspaceView: View {
         if SideloadAppIdentity.openInPlaceGrantLikelyDenied {
             presentAppDocumentsPicker()
         } else {
-            isFolderImporterPresented = true
+            presentSystemFolderPicker(keepingReauthorization: true)
         }
     }
 

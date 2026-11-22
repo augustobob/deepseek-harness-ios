@@ -2,45 +2,90 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 
-/// System folder picker in open-in-place mode (`asCopy: false`).
+/// Presents `UIDocumentPickerViewController` straight from the top-most view
+/// controller instead of through SwiftUI's `.fileImporter`.
 ///
-/// SwiftUI `.fileImporter` is an import (copy) presentation and, when stacked
-/// with another importer/exporter on the same view, can leave the Files sheet
-/// open after the user taps Open on a folder. UIKit's document picker with
-/// `asCopy: false` is the supported way to get a security-scoped directory
-/// URL for a durable bookmark.
+/// Why: `.fileImporter` always opens documents in place. On resigned
+/// (Impactor / Feather) installs iOS often refuses the File Provider grant,
+/// so every item is greyed out or "Open" silently does nothing and the
+/// completion handler never runs. Copy mode (`asCopy: true`) does not need
+/// the grant: iOS copies the picked file into the app's tmp/Inbox and hands
+/// back a plain file URL. Folders cannot be copied (UIKit throws), so they
+/// stay in open-in-place mode and have an in-sandbox Documents fallback.
 ///
-/// On sideloaded/resigned builds, iOS may still refuse the File Provider
-/// grant when `CFBundleIdentifier` does not match the profile's
-/// `application-identifier`. In that case Open does nothing and the caller
-/// should use the in-sandbox Documents fallback instead.
+/// Presenting from UIKit also avoids SwiftUI's one-presentation-per-view-node
+/// problem when several importers/exporters/dialogs live on the same view.
 @MainActor
-struct FolderDocumentPicker: UIViewControllerRepresentable {
-    var onPick: @MainActor (URL) -> Void
-    var onCancel: @MainActor () -> Void = {}
+enum DocumentPicker {
+    private static var activeCoordinator: Coordinator?
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onPick: onPick, onCancel: onCancel)
+    /// Pick one file as a private copy (works on sideloaded builds).
+    static func pickFileCopy(
+        types: [UTType],
+        onPick: @escaping @MainActor (URL) -> Void,
+        onCancel: @escaping @MainActor () -> Void = {}
+    ) {
+        present(types: types, asCopy: true, onPick: onPick, onCancel: onCancel)
     }
 
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // UIKit rejects folder picks when asCopy is true
-        // ("folder import is not supported, use asCopy:false").
+    /// Pick a folder in place (security-scoped URL, needed for a bookmark).
+    static func pickFolderInPlace(
+        onPick: @escaping @MainActor (URL) -> Void,
+        onCancel: @escaping @MainActor () -> Void = {}
+    ) {
+        present(types: [.folder], asCopy: false, onPick: onPick, onCancel: onCancel)
+    }
+
+    private static func present(
+        types: [UTType],
+        asCopy: Bool,
+        onPick: @escaping @MainActor (URL) -> Void,
+        onCancel: @escaping @MainActor () -> Void
+    ) {
+        guard let presenter = topViewController() else {
+            onCancel()
+            return
+        }
+        // UIKit raises an exception for folders with asCopy == true.
+        let copy = asCopy && !types.contains(where: { $0.conforms(to: .folder) })
         let picker = UIDocumentPickerViewController(
-            forOpeningContentTypes: [.folder],
-            asCopy: false
+            forOpeningContentTypes: types,
+            asCopy: copy
         )
         picker.allowsMultipleSelection = false
-        picker.delegate = context.coordinator
-        return picker
+        let coordinator = Coordinator(
+            onPick: { url in
+                activeCoordinator = nil
+                onPick(url)
+            },
+            onCancel: {
+                activeCoordinator = nil
+                onCancel()
+            }
+        )
+        activeCoordinator = coordinator
+        picker.delegate = coordinator
+        picker.presentationController?.delegate = coordinator
+        presenter.present(picker, animated: true)
     }
 
-    func updateUIViewController(
-        _ uiViewController: UIDocumentPickerViewController,
-        context: Context
-    ) {}
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive })
+            ?? scenes.first(where: { $0.activationState == .foregroundInactive })
+            ?? scenes.first
+        var top = scene?.windows.first(where: \.isKeyWindow)?.rootViewController
+            ?? scene?.windows.first?.rootViewController
+        while let presented = top?.presentedViewController, !presented.isBeingDismissed {
+            top = presented
+        }
+        return top
+    }
 
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+    private final class Coordinator: NSObject,
+        UIDocumentPickerDelegate,
+        UIAdaptivePresentationControllerDelegate
+    {
         let onPick: @MainActor (URL) -> Void
         let onCancel: @MainActor () -> Void
 
@@ -53,20 +98,24 @@ struct FolderDocumentPicker: UIViewControllerRepresentable {
         }
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            onCancel()
+            MainActor.assumeIsolated { onCancel() }
+        }
+
+        func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+            MainActor.assumeIsolated { onCancel() }
         }
 
         func documentPicker(
             _ controller: UIDocumentPickerViewController,
             didPickDocumentsAt urls: [URL]
         ) {
-            guard let url = urls.first else {
-                onCancel()
-                return
+            MainActor.assumeIsolated {
+                if let url = urls.first {
+                    onPick(url)
+                } else {
+                    onCancel()
+                }
             }
-            // The caller must startAccessingSecurityScopedResource on this
-            // URL before any await / actor hop.
-            onPick(url)
         }
     }
 }
