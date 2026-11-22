@@ -1,7 +1,7 @@
 # Foreground-only fork (branch `augusto/main`)
 
 This branch = upstream `codex/deepseek-parity` + R0GUEEE's English translation
-(`i18n/english`, commit 3f2e0d7 incl. the unsigned-IPA GitHub Actions workflow)
+(`i18n/english`, commit 3f2e0d7; the unsigned-IPA workflow is added separately)
 + a small, isolated patch that makes the app run **only while it is in the
 foreground**.
 
